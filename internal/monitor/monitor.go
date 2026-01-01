@@ -12,22 +12,21 @@ import (
 )
 
 type Monitor struct {
-	api      *proxmox.ProxmoxAPI
-	storage  *storage.Storage
-	interval time.Duration
-	retention int
+	api         *proxmox.ProxmoxAPI
+	storage     *storage.Storage
+	interval    time.Duration
+	retention   int
 	prevTraffic map[string]struct {
 		NetIn  uint64
 		NetOut uint64
 	}
-
 }
 
 func New(api *proxmox.ProxmoxAPI, s *storage.Storage, interval time.Duration, retention int) *Monitor {
 	return &Monitor{
-		api:      api,
-		storage:  s,
-		interval: interval,
+		api:       api,
+		storage:   s,
+		interval:  interval,
 		retention: retention,
 		prevTraffic: make(map[string]struct {
 			NetIn  uint64
@@ -36,6 +35,8 @@ func New(api *proxmox.ProxmoxAPI, s *storage.Storage, interval time.Duration, re
 	}
 }
 func (m *Monitor) Start(ctx context.Context) {
+	m.initTraffic()
+
 	log.Info().Msg("Starting traffic monitor...")
 	ticker := time.NewTicker(m.interval)
 	cleanupTicker := time.NewTicker(24 * time.Hour)
@@ -75,7 +76,7 @@ func (m *Monitor) collectTraffic(ctx context.Context) error {
 	log.Debug().Int("nodes_count", len(nodes)).Msg("Fetched nodes from Proxmox")
 
 	now := time.Now()
-	date := now.Format("02-01-06") // Retain for compatibility with existing 'date' column
+	date := now.Format("02-01-2006")
 
 	for _, node := range nodes {
 		nodeID := node.GetId()
@@ -97,7 +98,7 @@ func (m *Monitor) collectTraffic(ctx context.Context) error {
 				continue
 			}
 
-			id := fmt.Sprintf("%d-%s", vm.VMID, vm.Name)
+			id := fmt.Sprintf("%s-%d-%s", nodeID, vm.VMID, vm.Name)
 			currentNetIn := uint64(stats.NetIn)
 			currentNetOut := uint64(stats.NetOut)
 
@@ -150,6 +151,8 @@ func (m *Monitor) collectTraffic(ctx context.Context) error {
 				Date:      date,
 				In:        deltaNetIn,
 				Out:       deltaNetOut,
+				NodeID:    nodeID,
+				VMID:      vm.VMID,
 				Timestamp: &now,
 			}
 
@@ -169,6 +172,85 @@ func (m *Monitor) collectTraffic(ctx context.Context) error {
 	}
 
 	return nil
+}
+func (m *Monitor) initTraffic() {
+	log.Info().Msg("Running initial traffic...")
+
+	nodes, err := m.api.NodesAPI().GetNodes()
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to get Proxmox nodes for initial kickstarter")
+		return
+	}
+
+	for _, node := range nodes {
+		nodeID := node.GetId()
+		qemuAPI := m.api.QEMUAPI(nodeID)
+
+		vms, err := qemuAPI.GetAllServers()
+		if err != nil {
+			log.Warn().Err(err).Str("node", nodeID).Msg("Failed to get VMs for kickstarter")
+			continue
+		}
+
+		for _, vm := range vms {
+			stats, err := qemuAPI.StatusAPI().Stats(vm.VMID)
+			if err != nil {
+				log.Warn().Err(err).Int64("vmid", vm.VMID).Str("vm_name", vm.Name).Msg("Failed to get stats for kickstarter")
+				continue
+			}
+
+			currentNetIn := uint64(stats.NetIn)
+			currentNetOut := uint64(stats.NetOut)
+
+			if currentNetIn == 0 && currentNetOut == 0 {
+				continue
+			}
+
+			id := fmt.Sprintf("%s-%d-%s", nodeID, vm.VMID, vm.Name)
+			// Check if DB has any record for this VM
+			hasRecord, err := m.storage.ExistsTraffic(id)
+			if err != nil {
+				log.Warn().Err(err).Str("vm", id).Msg("Failed to check DB for kickstarter")
+				continue
+			}
+
+			if !hasRecord {
+				now := time.Now()
+				date := now.Format("02-01-2006")
+				// No previous record in DB -> initialize traffic record
+				record := storage.TrafficRecord{
+					ID:        id,
+					Date:      date,
+					In:        currentNetIn,
+					Out:       currentNetOut,
+					NodeID:    nodeID,
+					VMID:      vm.VMID,
+					Timestamp: &now,
+				}
+
+				if err := m.storage.UpdateTraffic(record); err != nil {
+					log.Warn().Err(err).Str("id", id).Msg("Failed to update traffic in storage")
+				} else {
+					log.Debug().Str("id", id).Msg("Traffic successfully updated in storage")
+				}
+
+				// Populate in-memory prevTraffic cache for immediate delta calculation
+				m.prevTraffic[id] = struct {
+					NetIn  uint64
+					NetOut uint64
+				}{
+					NetIn:  currentNetIn,
+					NetOut: currentNetOut,
+				}
+
+				log.Debug().
+					Str("vm", id).
+					Uint64("net_in", currentNetIn).
+					Uint64("net_out", currentNetOut).
+					Msg("Kickstarter: initialized delta with current traffic and cache")
+			}
+		}
+	}
 }
 
 func (m *Monitor) cleanup() {

@@ -28,11 +28,17 @@ var rootCmd = &cobra.Command{
 }
 
 func loadConfig() *configs.Config {
-    cfg, err := configs.New(configPath)
-    if err != nil {
-        log.Fatal().Err(err).Msgf("Failed to load configuration from %s", configPath)
-    }
-    return cfg
+	// Ensure the directory exists
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		log.Fatal().Err(err).Msgf("Failed to create config directory: %s", configDir)
+	}
+
+	cfg, err := configs.New(configPath)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Failed to load configuration from %s", configPath)
+	}
+	return cfg
 }
 
 func start(cmd *cobra.Command, _ []string) {
@@ -119,7 +125,7 @@ func Execute() {
 func init() {
 	rootCmd.Flags().BoolP("verbose", "v", false, "Enable info logging")
 	rootCmd.Flags().BoolP("debug", "d", false, "Enable debug logging")
-    rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "/var/lib/proxmox-traffic-monitor/config.yml", "Path to configuration file")
+	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "/var/lib/proxmox-traffic-monitor/config.yml", "Path to configuration file")
 
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 }

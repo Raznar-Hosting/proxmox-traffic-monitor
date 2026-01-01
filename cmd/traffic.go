@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"raznar.id/proxmox-traffic-monitor/internal/storage"
@@ -43,6 +44,20 @@ var clearCmd = &cobra.Command{
 	Short: "Clear traffic data for a specific VM or for all VMs.",
 	Long:  `Clear traffic data for a specific VM (if an ID is provided) or for all VMs (if no ID is provided).`,
 	Run:   clearTraffic,
+}
+
+var getRangeCmd = &cobra.Command{
+	Use:   "get-range [id]",
+	Short: "Fetch traffic records for a specific VM or all VMs within a date range",
+	Long:  `Fetch traffic records for a specific VM (if an ID is provided) or for all VMs (if no ID is provided) between start and end dates.`,
+	Run:   getRangeTraffic,
+}
+
+var getRangeTotalCmd = &cobra.Command{
+	Use:   "get-range-total [id]",
+	Short: "Fetch total traffic for a VM or all VMs within a date range",
+	Long:  `Fetch the sum of all traffic (IN/OUT) for a specific VM (if ID is provided) or all VMs (if no ID) between start and end dates.`,
+	Run:   getRangeTotalTraffic,
 }
 
 func getTraffic(cmd *cobra.Command, args []string) {
@@ -122,6 +137,22 @@ func clearTraffic(cmd *cobra.Command, args []string) {
 		id = args[0]
 	}
 
+	appConfig := loadConfig()
+	db, err := storage.New(appConfig.App.Database)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize database")
+	}
+	defer db.Close()
+
+	exists, err := db.ExistsTraffic(id)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to check traffic existence")
+	}
+	if !exists {
+		fmt.Println("No traffic data found for the specified VM.")
+		return
+	}
+
 	if !force {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Print("Are you sure you want to clear the traffic data? (y/n): ")
@@ -131,12 +162,6 @@ func clearTraffic(cmd *cobra.Command, args []string) {
 			return
 		}
 	}
-	appConfig := loadConfig()
-	db, err := storage.New(appConfig.App.Database)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize database")
-	}
-	defer db.Close()
 
 	err = db.ClearTraffic(id)
 	if err != nil {
@@ -144,6 +169,45 @@ func clearTraffic(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println("Traffic data cleared successfully.")
+}
+
+func getRangeTraffic(cmd *cobra.Command, args []string) {
+	id := ""
+	if len(args) > 0 {
+		id = args[0]
+	}
+
+	startDate, _ := cmd.Flags().GetString("start")
+	endDate, _ := cmd.Flags().GetString("end")
+
+	if startDate == "" || endDate == "" {
+		log.Fatal().Msg("Both --start and --end dates must be provided in DD-MM-YYYY format")
+	}
+
+	// Parse dates with 4-digit year
+	const layout = "02-01-2006"
+	start, err := time.Parse(layout, startDate)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Invalid --start date format, expected DD-MM-YYYY, got %s", startDate)
+	}
+	end, err := time.Parse(layout, endDate)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Invalid --end date format, expected DD-MM-YYYY, got %s", endDate)
+	}
+
+	appConfig := loadConfig()
+	db, err := storage.New(appConfig.App.Database)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize database")
+	}
+	defer db.Close()
+
+	records, err := db.GetTrafficByRange(id, start, end)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to get traffic data by range")
+	}
+
+	printRecords(records, false)
 }
 
 func printRecords(records []storage.TrafficRecord, hideDate bool) {
@@ -157,27 +221,76 @@ func printRecords(records []storage.TrafficRecord, hideDate bool) {
 
 	// Header
 	if hideDate {
-		fmt.Fprintln(w, "ID\tIN (MB)\tOUT (MB)")
+		fmt.Fprintln(w, "ID\tVMID\tNODEID\tIN\tOUT")
 	} else {
-		fmt.Fprintln(w, "ID\tDATE\tIN (MB)\tOUT (MB)")
+		fmt.Fprintln(w, "ID\tVMID\tNODEID\tDATE\tIN\tOUT")
 	}
 
 	for _, r := range records {
-		inMB := float64(r.In) / 1024 / 1024
-		outMB := float64(r.Out) / 1024 / 1024
+		inHuman := humanize.Bytes(r.In) // automatically converts bytes to KB, MB, GB
+		outHuman := humanize.Bytes(r.Out)
 
 		if hideDate {
-			fmt.Fprintf(w, "%s\t%.2f\t%.2f\n", r.ID, inMB, outMB)
+			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", r.ID, r.VMID, r.NodeID, inHuman, outHuman)
 		} else {
-			// Parse stored date and format it
 			displayDate := r.Date
 			if parsed, err := time.Parse("02-01-06", r.Date); err == nil {
 				displayDate = parsed.Format("02 Jan 2006") // human-friendly
 			}
-			fmt.Fprintf(w, "%s\t%s\t%.2f\t%.2f\n", r.ID, displayDate, inMB, outMB)
+			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n", r.ID, r.VMID, r.NodeID, displayDate, inHuman, outHuman)
 		}
 	}
 
+	w.Flush()
+}
+func getRangeTotalTraffic(cmd *cobra.Command, args []string) {
+	id := ""
+	if len(args) > 0 {
+		id = args[0]
+	}
+
+	startDate, _ := cmd.Flags().GetString("start")
+	endDate, _ := cmd.Flags().GetString("end")
+
+	if startDate == "" || endDate == "" {
+		log.Fatal().Msg("Both --start and --end dates must be provided in DD-MM-YYYY format")
+	}
+
+	const layout = "02-01-2006"
+	start, err := time.Parse(layout, startDate)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Invalid --start date format, expected DD-MM-YYYY, got %s", startDate)
+	}
+	end, err := time.Parse(layout, endDate)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Invalid --end date format, expected DD-MM-YYYY, got %s", endDate)
+	}
+
+	appConfig := loadConfig()
+	db, err := storage.New(appConfig.App.Database)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize database")
+	}
+	defer db.Close()
+
+	records, err := db.GetTrafficTotalByRange(id, start, end)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to get total traffic by range")
+	}
+
+	if jsonOutput {
+		json.NewEncoder(os.Stdout).Encode(records)
+		return
+	}
+
+	w := new(tabwriter.Writer)
+	w.Init(os.Stdout, 0, 8, 2, '\t', 0)
+	fmt.Fprintln(w, "ID\tTOTAL IN (MB)\tTOTAL OUT (MB)")
+	for _, r := range records {
+		inMB := float64(r.In) / 1024 / 1024
+		outMB := float64(r.Out) / 1024 / 1024
+		fmt.Fprintf(w, "%s\t%.2f\t%.2f\n", r.ID, inMB, outMB)
+	}
 	w.Flush()
 }
 
@@ -186,7 +299,15 @@ func init() {
 	rootCmd.AddCommand(getDailyCmd)
 	rootCmd.AddCommand(getMonthlyCmd)
 	rootCmd.AddCommand(clearCmd)
+	rootCmd.AddCommand(getRangeCmd)
+	rootCmd.AddCommand(getRangeTotalCmd)
 
+	getRangeTotalCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	getRangeTotalCmd.Flags().String("start", "", "Start date in DD-MM-YYYY format")
+	getRangeTotalCmd.Flags().String("end", "", "End date in DD-MM-YYYY format")
+	getRangeCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	getRangeCmd.Flags().String("start", "", "Start date in DD-MM-YY format")
+	getRangeCmd.Flags().String("end", "", "End date in DD-MM-YY format")
 	getCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	getDailyCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	getDailyCmd.Flags().String("date", "", "Date in DD-MM-YY format (defaults to today)")
