@@ -210,39 +210,6 @@ func getRangeTraffic(cmd *cobra.Command, args []string) {
 	printRecords(records, false)
 }
 
-func printRecords(records []storage.TrafficRecord, hideDate bool) {
-	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(records)
-		return
-	}
-
-	w := new(tabwriter.Writer)
-	w.Init(os.Stdout, 0, 8, 2, '\t', 0)
-
-	// Header
-	if hideDate {
-		fmt.Fprintln(w, "ID\tVMID\tNODEID\tIN\tOUT")
-	} else {
-		fmt.Fprintln(w, "ID\tVMID\tNODEID\tDATE\tIN\tOUT")
-	}
-
-	for _, r := range records {
-		inHuman := humanize.Bytes(r.In) // automatically converts bytes to KB, MB, GB
-		outHuman := humanize.Bytes(r.Out)
-
-		if hideDate {
-			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", r.ID, r.VMID, r.NodeID, inHuman, outHuman)
-		} else {
-			displayDate := r.Date
-			if parsed, err := time.Parse("02-01-06", r.Date); err == nil {
-				displayDate = parsed.Format("02 Jan 2006") // human-friendly
-			}
-			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n", r.ID, r.VMID, r.NodeID, displayDate, inHuman, outHuman)
-		}
-	}
-
-	w.Flush()
-}
 func getRangeTotalTraffic(cmd *cobra.Command, args []string) {
 	id := ""
 	if len(args) > 0 {
@@ -283,16 +250,43 @@ func getRangeTotalTraffic(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	printRecords(records, true)
+}
+
+func printRecords(records []storage.TrafficRecord, hideDate bool) {
+	if jsonOutput {
+		json.NewEncoder(os.Stdout).Encode(records)
+		return
+	}
+
 	w := new(tabwriter.Writer)
 	w.Init(os.Stdout, 0, 8, 2, '\t', 0)
-	fmt.Fprintln(w, "ID\tTOTAL IN (MB)\tTOTAL OUT (MB)")
-	for _, r := range records {
-		inMB := float64(r.In) / 1024 / 1024
-		outMB := float64(r.Out) / 1024 / 1024
-		fmt.Fprintf(w, "%s\t%.2f\t%.2f\n", r.ID, inMB, outMB)
+
+	// Header
+	if hideDate {
+		fmt.Fprintln(w, "ID\tVMID\tNODEID\tIN\tOUT")
+	} else {
+		fmt.Fprintln(w, "ID\tVMID\tNODEID\tDATE\tIN\tOUT")
 	}
+
+	for _, r := range records {
+		inHuman := humanize.Bytes(r.In) // automatically converts bytes to KB, MB, GB
+		outHuman := humanize.Bytes(r.Out)
+
+		if hideDate {
+			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", r.ID, r.VMID, r.NodeID, inHuman, outHuman)
+		} else {
+			displayDate := r.Date
+			if parsed, err := time.Parse("02-01-06", r.Date); err == nil {
+				displayDate = parsed.Format("02 Jan 2006") // human-friendly
+			}
+			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n", r.ID, r.VMID, r.NodeID, displayDate, inHuman, outHuman)
+		}
+	}
+
 	w.Flush()
 }
+
 
 func init() {
 	rootCmd.AddCommand(getCmd)
