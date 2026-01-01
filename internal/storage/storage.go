@@ -11,12 +11,13 @@ import (
 )
 
 type TrafficRecord struct {
-	ID        string     `json:"id"`
-	VMID      int64     `json:"vmid"`   // new field
-	NodeID    string     `json:"nodeid"` // new field
-	Date      string     `json:"date"`
-	In        uint64     `json:"in"`
-	Out       uint64     `json:"out"`
+	ID     string `json:"id"`
+	VMID   int64  `json:"vmid"`   // new field
+	NodeID string `json:"nodeid"` // new field
+	In     uint64 `json:"in"`
+	Out    uint64 `json:"out"`
+
+	Date      string     `json:"date,omitempty"`      //optional
 	Timestamp *time.Time `json:"timestamp,omitempty"` // omit if nil
 }
 
