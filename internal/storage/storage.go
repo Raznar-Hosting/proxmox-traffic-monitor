@@ -17,7 +17,6 @@ type TrafficRecord struct {
 	In     uint64 `json:"in"`
 	Out    uint64 `json:"out"`
 
-	Date      string     `json:"date,omitempty"`      //optional
 	Timestamp *time.Time `json:"timestamp,omitempty"` // omit if nil
 }
 
@@ -51,7 +50,6 @@ func (s *Storage) init() error {
 		id TEXT NOT NULL,
 		vmid TEXT NOT NULL,
 		nodeid TEXT NOT NULL,
-		date TEXT NOT NULL,
 		net_in INTEGER NOT NULL,
 		net_out INTEGER NOT NULL,
 		timestamp INTEGER NOT NULL,
@@ -63,19 +61,27 @@ func (s *Storage) init() error {
 	}
 	return nil
 }
+
 func (s *Storage) UpdateTraffic(record TrafficRecord) error {
 	query := `
-	INSERT INTO traffic (id, vmid, nodeid, date, net_in, net_out, timestamp)
-	VALUES (?, ?, ?, ?, ?, ?, ?);
+	INSERT INTO traffic (id, vmid, nodeid, net_in, net_out, timestamp)
+	VALUES (?, ?, ?, ?, ?, ?);
 	`
-	var ts int64
+
+	ts := time.Now().Unix()
 	if record.Timestamp != nil {
 		ts = record.Timestamp.Unix()
-	} else {
-		ts = time.Now().Unix()
 	}
 
-	_, err := s.db.Exec(query, record.ID, record.VMID, record.NodeID, record.Date, record.In, record.Out, ts)
+	_, err := s.db.Exec(
+		query,
+		record.ID,
+		record.VMID,
+		record.NodeID,
+		record.In,
+		record.Out,
+		ts,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to update traffic: %w", err)
 	}
@@ -83,130 +89,66 @@ func (s *Storage) UpdateTraffic(record TrafficRecord) error {
 }
 
 func (s *Storage) GetTraffic(id string) ([]TrafficRecord, error) {
-	var query string
-	var args []interface{}
-
-	if id != "" {
-		// Sum all traffic for a specific VM
-		query = `
-			SELECT id, vmid, nodeid, SUM(net_in) as net_in, SUM(net_out) as net_out
-			FROM traffic
-			WHERE id = ?
-			GROUP BY id, vmid, nodeid
-		`
-		args = append(args, id)
-	} else {
-		// Sum traffic for all VMs
-		query = `
-			SELECT id, vmid, nodeid, SUM(net_in) as net_in, SUM(net_out) as net_out
-			FROM traffic
-			GROUP BY id, vmid, nodeid
-			ORDER BY id
-		`
-	}
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var records []TrafficRecord
-	for rows.Next() {
-		var r TrafficRecord
-		if id != "" {
-			r.Date = "ALL"
-		} else {
-			r.Date = "ALL"
-		}
-		if err := rows.Scan(&r.ID, &r.VMID, &r.NodeID, &r.In, &r.Out); err != nil {
-			return nil, err
-		}
-		records = append(records, r)
-	}
-	return records, nil
-}
-
-func (s *Storage) GetDailyTraffic(id string, date string) ([]TrafficRecord, error) {
-	var query string
-	var args []interface{}
-
-	if id != "" {
-		query = "SELECT id, vmid, nodeid, date, net_in, net_out FROM traffic WHERE id = ? AND date = ?"
-		args = append(args, id, date)
-	} else {
-		query = "SELECT id, vmid, nodeid, date, net_in, net_out FROM traffic WHERE date = ?"
-		args = append(args, date)
-	}
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var records []TrafficRecord
-	for rows.Next() {
-		var r TrafficRecord
-		if err := rows.Scan(&r.ID, &r.VMID, &r.NodeID, &r.Date, &r.In, &r.Out); err != nil {
-			return nil, err
-		}
-		records = append(records, r)
-	}
-	return records, nil
-}
-
-func (s *Storage) GetMonthlyTraffic(id string, monthYear string) ([]TrafficRecord, error) {
-	// monthYear should be -MM-YY
-	var query string
-	var args []interface{}
-
-	if id != "" {
-		query = `
-		SELECT id, vmid, nodeid, SUBSTR(date, 4) as month, SUM(net_in), SUM(net_out)
-		FROM traffic
-		WHERE id = ? AND date LIKE ?
-		GROUP BY id, vmid, nodeid, month`
-		args = append(args, id, "%"+monthYear)
-	} else {
-		query = `
-		SELECT id, vmid, nodeid, SUBSTR(date, 4) as month, SUM(net_in), SUM(net_out)
-		FROM traffic
-		WHERE date LIKE ?
-		GROUP BY id, vmid, nodeid, month`
-		args = append(args, "%"+monthYear)
-	}
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var records []TrafficRecord
-	for rows.Next() {
-		var r TrafficRecord
-		if err := rows.Scan(&r.ID, &r.VMID, &r.NodeID, &r.Date, &r.In, &r.Out); err != nil {
-			return nil, err
-		}
-		records = append(records, r)
-	}
-	return records, nil
-}
-
-func (s *Storage) GetTrafficByRange(id string, start, end time.Time) ([]TrafficRecord, error) {
 	query := `
-	SELECT id, vmid, nodeid, date, net_in, net_out, timestamp
+		SELECT id, vmid, nodeid,
+		       SUM(net_in)  AS net_in,
+		       SUM(net_out) AS net_out
+		FROM traffic
+	`
+	args := []any{}
+
+	if id != "" {
+		query += " WHERE id = ?"
+		args = append(args, id)
+	}
+
+	query += " GROUP BY id, vmid, nodeid ORDER BY id"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]TrafficRecord, 0)
+	for rows.Next() {
+		var r TrafficRecord
+		if err := rows.Scan(
+			&r.ID,
+			&r.VMID,
+			&r.NodeID,
+			&r.In,
+			&r.Out,
+		); err != nil {
+			return nil, err
+		}
+		// Timestamp intentionally nil: this is an aggregate
+		records = append(records, r)
+	}
+
+	return records, rows.Err()
+}
+
+
+
+func (s *Storage) GetDailyTraffic(id string, day time.Time) ([]TrafficRecord, error) {
+	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, day.Location())
+	end := start.AddDate(0, 0, 1) // next day
+
+	query := `
+	SELECT id, vmid, nodeid, SUM(net_in) AS net_in, SUM(net_out) AS net_out,
+	       strftime('%s', timestamp, 'unixepoch', 'start of day') AS day_ts
 	FROM traffic
-	WHERE date BETWEEN ? AND ?`
-	args := []interface{}{start.Format("02-01-2006"), end.Format("02-01-2006")}
+	WHERE timestamp >= ? AND timestamp < ?
+	`
+	args := []any{start.Unix(), end.Unix()}
 
 	if id != "" {
 		query += " AND id = ?"
 		args = append(args, id)
 	}
 
-	query += " ORDER BY date, id"
+	query += " GROUP BY id, vmid, nodeid, day_ts ORDER BY day_ts, id"
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -214,27 +156,153 @@ func (s *Storage) GetTrafficByRange(id string, start, end time.Time) ([]TrafficR
 	}
 	defer rows.Close()
 
-	var records []TrafficRecord
+	records := make([]TrafficRecord, 0)
 	for rows.Next() {
 		var r TrafficRecord
-		var ts int64
-		if err := rows.Scan(&r.ID, &r.VMID, &r.NodeID, &r.Date, &r.In, &r.Out, &ts); err != nil {
+		var dayTS int64
+		if err := rows.Scan(&r.ID, &r.VMID, &r.NodeID, &r.In, &r.Out, &dayTS); err != nil {
 			return nil, err
 		}
-		t := time.Unix(ts, 0)
+		t := time.Unix(dayTS, 0)
 		r.Timestamp = &t
 		records = append(records, r)
 	}
 
-	return records, nil
+	return records, rows.Err()
 }
 
-func (s *Storage) GetTrafficTotalByRange(id string, start, end time.Time) ([]TrafficRecord, error) {
+func (s *Storage) GetMonthlyTraffic(id string, monthYear string) ([]TrafficRecord, error) {
+	// monthYear format: YYYY-MM
+	start, err := time.Parse("2006-01", monthYear)
+	if err != nil {
+		return nil, fmt.Errorf("invalid month format: %w", err)
+	}
+	end := start.AddDate(0, 1, 0) // next month
+
 	query := `
-	SELECT id, vmid, nodeid, SUM(net_in) as total_in, SUM(net_out) as total_out
+	SELECT id, vmid, nodeid,
+	       SUM(net_in) AS net_in,
+	       SUM(net_out) AS net_out,
+	       strftime('%s', timestamp, 'unixepoch', 'start of month') AS month_ts
 	FROM traffic
-	WHERE date >= ? AND date <= ?`
-	args := []interface{}{start.Format("02-01-2006"), end.Format("02-01-2006")}
+	WHERE timestamp >= ? AND timestamp < ?
+	`
+	args := []any{start.Unix(), end.Unix()}
+
+	if id != "" {
+		query += " AND id = ?"
+		args = append(args, id)
+	}
+
+	query += " GROUP BY id, vmid, nodeid, month_ts ORDER BY id"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]TrafficRecord, 0)
+	for rows.Next() {
+		var r TrafficRecord
+		var monthTS int64
+		if err := rows.Scan(&r.ID, &r.VMID, &r.NodeID, &r.In, &r.Out, &monthTS); err != nil {
+			return nil, err
+		}
+		t := time.Unix(monthTS, 0)
+		r.Timestamp = &t
+		records = append(records, r)
+	}
+
+	return records, rows.Err()
+}
+
+
+func (s *Storage) GetTrafficByRange(id string, start, end *time.Time) ([]TrafficRecord, error) {
+	// Default end = now
+	if end == nil {
+		now := time.Now()
+		end = &now
+	}
+
+	// Default start = very old (Unix epoch)
+	if start == nil {
+		t := time.Unix(0, 0)
+		start = &t
+	}
+
+	query := `
+		SELECT id, vmid, nodeid, net_in, net_out, timestamp
+		FROM traffic
+		WHERE timestamp BETWEEN ? AND ?
+	`
+	args := []any{start.Unix(), end.Unix()}
+
+	if id != "" {
+		query += " AND id = ?"
+		args = append(args, id)
+	}
+
+	query += " ORDER BY timestamp, id"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records := make([]TrafficRecord, 0)
+	for rows.Next() {
+		var r TrafficRecord
+		var ts int64
+
+		if err := rows.Scan(
+			&r.ID,
+			&r.VMID,
+			&r.NodeID,
+			&r.In,
+			&r.Out,
+			&ts,
+		); err != nil {
+			return nil, err
+		}
+
+		t := time.Unix(ts, 0)
+		r.Timestamp = &t
+
+		records = append(records, r)
+	}
+
+	return records, rows.Err()
+}
+
+func (s *Storage) GetTrafficTotalByRange(
+	id string,
+	start, end *time.Time,
+) ([]TrafficRecord, error) {
+
+	// Default end = now
+	if end == nil {
+		now := time.Now()
+		end = &now
+	}
+
+	// Default start = unix epoch
+	if start == nil {
+		t := time.Unix(0, 0)
+		start = &t
+	}
+
+	query := `
+	SELECT id, vmid, nodeid,
+	       SUM(net_in)  AS total_in,
+	       SUM(net_out) AS total_out
+	FROM traffic
+	WHERE timestamp >= ? AND timestamp <= ?`
+	args := []interface{}{
+		start.Unix(),
+		end.Unix(),
+	}
 
 	if id != "" {
 		query += " AND id = ?"
@@ -249,16 +317,22 @@ func (s *Storage) GetTrafficTotalByRange(id string, start, end time.Time) ([]Tra
 	}
 	defer rows.Close()
 
-	var totals []TrafficRecord
+	records := make([]TrafficRecord, 0)
 	for rows.Next() {
 		var r TrafficRecord
-		if err := rows.Scan(&r.ID, &r.VMID, &r.NodeID, &r.In, &r.Out); err != nil {
+		if err := rows.Scan(
+			&r.ID,
+			&r.VMID,
+			&r.NodeID,
+			&r.In,
+			&r.Out,
+		); err != nil {
 			return nil, err
 		}
-		totals = append(totals, r)
+		records = append(records, r)
 	}
 
-	return totals, nil
+	return records, nil
 }
 
 func (s *Storage) ClearTraffic(id string) error {
@@ -277,14 +351,15 @@ func (s *Storage) ClearTraffic(id string) error {
 }
 
 func (s *Storage) CleanupOldRecords(days int) (int64, error) {
+	// cutoff = now - N days
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour).Unix()
+
 	query := `
 	DELETE FROM traffic
-	WHERE
-		-- Reorder DD-MM-YY to YY-MM-DD for correct date comparison
-		('20' || SUBSTR(date, 7, 2) || '-' || SUBSTR(date, 4, 2) || '-' || SUBSTR(date, 1, 2))
-		< date('now', '-' || ? || ' days')
+	WHERE timestamp < ?;
 	`
-	res, err := s.db.Exec(query, days)
+
+	res, err := s.db.Exec(query, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("failed to cleanup old records: %w", err)
 	}

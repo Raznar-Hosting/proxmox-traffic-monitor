@@ -66,21 +66,17 @@ func (m *Monitor) enqueueJob() {
 	log.Debug().Msg("Adding job to sync queue")
 	syncqueue.GlobalJobQueue.Add(m.collectTraffic, 3, 5*time.Second, 50*time.Second)
 }
-
 func (m *Monitor) collectTraffic(ctx context.Context) error {
 	nodes, err := m.api.NodesAPI().GetNodes()
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to get Proxmox nodes")
 		return fmt.Errorf("failed to get nodes: %w", err)
 	}
-	log.Debug().Int("nodes_count", len(nodes)).Msg("Fetched nodes from Proxmox")
 
 	now := time.Now()
-	date := now.Format("02-01-2006")
 
 	for _, node := range nodes {
 		nodeID := node.GetId()
-		log.Debug().Str("node", nodeID).Msg("Processing node")
 
 		qemuAPI := m.api.QEMUAPI(nodeID)
 		vms, err := qemuAPI.GetAllServers()
@@ -89,49 +85,52 @@ func (m *Monitor) collectTraffic(ctx context.Context) error {
 			continue
 		}
 
-		log.Debug().Int("vm_count", len(vms)).Str("node", nodeID).Msg("VMs fetched for node")
-
 		for _, vm := range vms {
 			stats, err := qemuAPI.StatusAPI().Stats(vm.VMID)
 			if err != nil {
-				log.Warn().Err(err).Int64("vmid", vm.VMID).Str("vm_name", vm.Name).Msg("Failed to get stats for VM")
+				log.Warn().Err(err).
+					Int64("vmid", vm.VMID).
+					Str("vm_name", vm.Name).
+					Msg("Failed to get stats for VM")
 				continue
 			}
 
 			id := fmt.Sprintf("%s-%d-%s", nodeID, vm.VMID, vm.Name)
+
 			currentNetIn := uint64(stats.NetIn)
 			currentNetOut := uint64(stats.NetOut)
 
-			var deltaNetIn uint64
-			var deltaNetOut uint64
+			var deltaNetIn, deltaNetOut uint64
 
 			if prev, ok := m.prevTraffic[id]; ok {
-				// Calculate delta
 				if currentNetIn >= prev.NetIn {
 					deltaNetIn = currentNetIn - prev.NetIn
 				} else {
-					// Counter reset or overflow, assume current value is the new delta from 0
 					deltaNetIn = currentNetIn
-					log.Warn().Str("vm", id).Uint64("prev_in", prev.NetIn).Uint64("current_in", currentNetIn).Msg("NetIn counter reset detected, assuming new base.")
+					log.Warn().Str("vm", id).
+						Uint64("prev_in", prev.NetIn).
+						Uint64("current_in", currentNetIn).
+						Msg("NetIn counter reset detected")
 				}
 
 				if currentNetOut >= prev.NetOut {
 					deltaNetOut = currentNetOut - prev.NetOut
 				} else {
-					// Counter reset or overflow, assume current value is the new delta from 0
 					deltaNetOut = currentNetOut
-					log.Warn().Str("vm", id).Uint64("prev_out", prev.NetOut).Uint64("current_out", currentNetOut).Msg("NetOut counter reset detected, assuming new base.")
+					log.Warn().Str("vm", id).
+						Uint64("prev_out", prev.NetOut).
+						Uint64("current_out", currentNetOut).
+						Msg("NetOut counter reset detected")
 				}
 			} else {
-				// First collection for this VM, or after monitor restart.
-				// We don't have previous data to calculate delta.
-				// For this interval, delta is 0, but we populate the cache for next interval.
+				// First run after start/restart
 				deltaNetIn = 0
 				deltaNetOut = 0
-				log.Debug().Str("vm", id).Msg("First traffic collection for VM, skipping delta calculation for this interval.")
+				log.Debug().Str("vm", id).
+					Msg("First traffic collection, skipping delta")
 			}
 
-			// Update cache with current cumulative values for the next interval
+			// Update cache
 			m.prevTraffic[id] = struct {
 				NetIn  uint64
 				NetOut uint64
@@ -140,33 +139,23 @@ func (m *Monitor) collectTraffic(ctx context.Context) error {
 				NetOut: currentNetOut,
 			}
 
-			// Required: Always skip records with zero traffic
+			// Skip zero delta
 			if deltaNetIn == 0 && deltaNetOut == 0 {
-				log.Debug().Str("vm", id).Msg("Skipping record due to zero traffic delta.")
-				continue // Skip storing this record
+				continue
 			}
 
 			record := storage.TrafficRecord{
 				ID:        id,
-				Date:      date,
-				In:        deltaNetIn,
-				Out:       deltaNetOut,
 				NodeID:    nodeID,
 				VMID:      vm.VMID,
+				In:        deltaNetIn,
+				Out:       deltaNetOut,
 				Timestamp: &now,
 			}
 
-			log.Debug().
-				Str("vm", id).
-				Uint64("net_in_delta", record.In).
-				Uint64("net_out_delta", record.Out).
-				Time("timestamp", now).
-				Msg("Traffic stats collected with delta")
-
 			if err := m.storage.UpdateTraffic(record); err != nil {
-				log.Warn().Err(err).Str("id", id).Msg("Failed to update traffic in storage")
-			} else {
-				log.Debug().Str("id", id).Msg("Traffic successfully updated in storage")
+				log.Warn().Err(err).Str("id", id).
+					Msg("Failed to update traffic in storage")
 			}
 		}
 	}
@@ -178,7 +167,8 @@ func (m *Monitor) initTraffic() {
 
 	nodes, err := m.api.NodesAPI().GetNodes()
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to get Proxmox nodes for initial kickstarter")
+		log.Warn().Err(err).
+			Msg("Failed to get Proxmox nodes for initial kickstarter")
 		return
 	}
 
@@ -188,14 +178,19 @@ func (m *Monitor) initTraffic() {
 
 		vms, err := qemuAPI.GetAllServers()
 		if err != nil {
-			log.Warn().Err(err).Str("node", nodeID).Msg("Failed to get VMs for kickstarter")
+			log.Warn().Err(err).
+				Str("node", nodeID).
+				Msg("Failed to get VMs for kickstarter")
 			continue
 		}
 
 		for _, vm := range vms {
 			stats, err := qemuAPI.StatusAPI().Stats(vm.VMID)
 			if err != nil {
-				log.Warn().Err(err).Int64("vmid", vm.VMID).Str("vm_name", vm.Name).Msg("Failed to get stats for kickstarter")
+				log.Warn().Err(err).
+					Int64("vmid", vm.VMID).
+					Str("vm_name", vm.Name).
+					Msg("Failed to get stats for kickstarter")
 				continue
 			}
 
@@ -207,34 +202,36 @@ func (m *Monitor) initTraffic() {
 			}
 
 			id := fmt.Sprintf("%s-%d-%s", nodeID, vm.VMID, vm.Name)
+
 			// Check if DB has any record for this VM
 			hasRecord, err := m.storage.ExistsTraffic(id)
 			if err != nil {
-				log.Warn().Err(err).Str("vm", id).Msg("Failed to check DB for kickstarter")
+				log.Warn().Err(err).
+					Str("vm", id).
+					Msg("Failed to check DB for kickstarter")
 				continue
 			}
 
 			if !hasRecord {
 				now := time.Now()
-				date := now.Format("02-01-2006")
-				// No previous record in DB -> initialize traffic record
+
+				// Initialize baseline record
 				record := storage.TrafficRecord{
 					ID:        id,
-					Date:      date,
-					In:        currentNetIn,
-					Out:       currentNetOut,
 					NodeID:    nodeID,
 					VMID:      vm.VMID,
+					In:        currentNetIn,
+					Out:       currentNetOut,
 					Timestamp: &now,
 				}
 
 				if err := m.storage.UpdateTraffic(record); err != nil {
-					log.Warn().Err(err).Str("id", id).Msg("Failed to update traffic in storage")
-				} else {
-					log.Debug().Str("id", id).Msg("Traffic successfully updated in storage")
+					log.Warn().Err(err).
+						Str("id", id).
+						Msg("Failed to update traffic in storage")
 				}
 
-				// Populate in-memory prevTraffic cache for immediate delta calculation
+				// Populate in-memory cache
 				m.prevTraffic[id] = struct {
 					NetIn  uint64
 					NetOut uint64
@@ -247,7 +244,7 @@ func (m *Monitor) initTraffic() {
 					Str("vm", id).
 					Uint64("net_in", currentNetIn).
 					Uint64("net_out", currentNetOut).
-					Msg("Kickstarter: initialized delta with current traffic and cache")
+					Msg("Kickstarter: initialized baseline traffic")
 			}
 		}
 	}

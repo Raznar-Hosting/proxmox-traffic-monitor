@@ -80,17 +80,26 @@ func getTraffic(cmd *cobra.Command, args []string) {
 
 	printRecords(records, true)
 }
-
 func getDailyTraffic(cmd *cobra.Command, args []string) {
 	id := ""
 	if len(args) > 0 {
 		id = args[0]
 	}
 
-	date, _ := cmd.Flags().GetString("date")
-	if date == "" {
-		date = time.Now().Format("02-01-06")
+	dateStr, _ := cmd.Flags().GetString("date")
+	var day time.Time
+	var err error
+
+	if dateStr == "" {
+		day = time.Now()
+	} else {
+		// Expecting DD-MM-YYYY
+		day, err = time.Parse("02-01-2006", dateStr)
+		if err != nil {
+			log.Fatal().Err(err).Msgf("Invalid date format, expected DD-MM-YYYY, got %s", dateStr)
+		}
 	}
+
 	appConfig := loadConfig()
 	db, err := storage.New(appConfig.App.Database)
 	if err != nil {
@@ -98,7 +107,7 @@ func getDailyTraffic(cmd *cobra.Command, args []string) {
 	}
 	defer db.Close()
 
-	records, err := db.GetDailyTraffic(id, date)
+	records, err := db.GetDailyTraffic(id, day)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to get daily traffic data")
 	}
@@ -112,10 +121,19 @@ func getMonthlyTraffic(cmd *cobra.Command, args []string) {
 		id = args[0]
 	}
 
-	month, _ := cmd.Flags().GetString("month")
-	if month == "" {
-		month = time.Now().Format("-01-06")
+	monthStr, _ := cmd.Flags().GetString("month")
+	var month string
+
+	if monthStr == "" {
+		month = time.Now().Format("2006-01") // YYYY-MM
+	} else {
+		// Validate format YYYY-MM
+		if _, err := time.Parse("2006-01", monthStr); err != nil {
+			log.Fatal().Err(err).Msgf("Invalid month format, expected YYYY-MM, got %s", monthStr)
+		}
+		month = monthStr
 	}
+
 	appConfig := loadConfig()
 	db, err := storage.New(appConfig.App.Database)
 	if err != nil {
@@ -177,22 +195,34 @@ func getRangeTraffic(cmd *cobra.Command, args []string) {
 		id = args[0]
 	}
 
-	startDate, _ := cmd.Flags().GetString("start")
-	endDate, _ := cmd.Flags().GetString("end")
+	startStr, _ := cmd.Flags().GetString("start")
+	endStr, _ := cmd.Flags().GetString("end")
 
-	if startDate == "" || endDate == "" {
-		log.Fatal().Msg("Both --start and --end dates must be provided in DD-MM-YYYY format")
-	}
-
-	// Parse dates with 4-digit year
 	const layout = "02-01-2006"
-	start, err := time.Parse(layout, startDate)
-	if err != nil {
-		log.Fatal().Err(err).Msgf("Invalid --start date format, expected DD-MM-YYYY, got %s", startDate)
+
+	var start *time.Time
+	var end *time.Time
+
+	if startStr != "" {
+		t, err := time.Parse(layout, startStr)
+		if err != nil {
+			log.Fatal().
+				Err(err).
+				Msgf("Invalid --start date format, expected DD-MM-YYYY, got %s", startStr)
+		}
+		start = &t
 	}
-	end, err := time.Parse(layout, endDate)
-	if err != nil {
-		log.Fatal().Err(err).Msgf("Invalid --end date format, expected DD-MM-YYYY, got %s", endDate)
+
+	if endStr != "" {
+		t, err := time.Parse(layout, endStr)
+		if err != nil {
+			log.Fatal().
+				Err(err).
+				Msgf("Invalid --end date format, expected DD-MM-YYYY, got %s", endStr)
+		}
+		// include full day
+		t = t.AddDate(0, 0, 1)
+		end = &t
 	}
 
 	appConfig := loadConfig()
@@ -216,21 +246,34 @@ func getRangeTotalTraffic(cmd *cobra.Command, args []string) {
 		id = args[0]
 	}
 
-	startDate, _ := cmd.Flags().GetString("start")
-	endDate, _ := cmd.Flags().GetString("end")
-
-	if startDate == "" || endDate == "" {
-		log.Fatal().Msg("Both --start and --end dates must be provided in DD-MM-YYYY format")
-	}
+	startStr, _ := cmd.Flags().GetString("start")
+	endStr, _ := cmd.Flags().GetString("end")
 
 	const layout = "02-01-2006"
-	start, err := time.Parse(layout, startDate)
-	if err != nil {
-		log.Fatal().Err(err).Msgf("Invalid --start date format, expected DD-MM-YYYY, got %s", startDate)
+
+	var start *time.Time
+	var end *time.Time
+
+	if startStr != "" {
+		t, err := time.Parse(layout, startStr)
+		if err != nil {
+			log.Fatal().
+				Err(err).
+				Msgf("Invalid --start date format, expected DD-MM-YYYY, got %s", startStr)
+		}
+		start = &t
 	}
-	end, err := time.Parse(layout, endDate)
-	if err != nil {
-		log.Fatal().Err(err).Msgf("Invalid --end date format, expected DD-MM-YYYY, got %s", endDate)
+
+	if endStr != "" {
+		t, err := time.Parse(layout, endStr)
+		if err != nil {
+			log.Fatal().
+				Err(err).
+				Msgf("Invalid --end date format, expected DD-MM-YYYY, got %s", endStr)
+		}
+		// include full day
+		t = t.AddDate(0, 0, 1)
+		end = &t
 	}
 
 	appConfig := loadConfig()
@@ -255,7 +298,7 @@ func getRangeTotalTraffic(cmd *cobra.Command, args []string) {
 
 func printRecords(records []storage.TrafficRecord, hideDate bool) {
 	if jsonOutput {
-		json.NewEncoder(os.Stdout).Encode(records)
+		_ = json.NewEncoder(os.Stdout).Encode(records)
 		return
 	}
 
@@ -270,23 +313,38 @@ func printRecords(records []storage.TrafficRecord, hideDate bool) {
 	}
 
 	for _, r := range records {
-		inHuman := humanize.Bytes(r.In) // automatically converts bytes to KB, MB, GB
+		inHuman := humanize.Bytes(r.In)
 		outHuman := humanize.Bytes(r.Out)
 
-		if hideDate {
-			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", r.ID, r.VMID, r.NodeID, inHuman, outHuman)
-		} else {
-			displayDate := r.Date
-			if parsed, err := time.Parse("02-01-06", r.Date); err == nil {
-				displayDate = parsed.Format("02 Jan 2006") // human-friendly
-			}
-			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n", r.ID, r.VMID, r.NodeID, displayDate, inHuman, outHuman)
+		if hideDate || r.Timestamp == nil {
+			fmt.Fprintf(
+				w,
+				"%s\t%d\t%s\t%s\t%s\n",
+				r.ID,
+				r.VMID,
+				r.NodeID,
+				inHuman,
+				outHuman,
+			)
+			continue
 		}
+
+		displayDate := r.Timestamp.Format("02 Jan 2006")
+
+		fmt.Fprintf(
+			w,
+			"%s\t%d\t%s\t%s\t%s\t%s\n",
+			r.ID,
+			r.VMID,
+			r.NodeID,
+			displayDate,
+			inHuman,
+			outHuman,
+		)
 	}
 
 	w.Flush()
 }
-
 
 func init() {
 	rootCmd.AddCommand(getCmd)
