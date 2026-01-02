@@ -15,7 +15,6 @@ import (
 	"raznar.id/proxmox-traffic-monitor/internal/storage"
 )
 
-var jsonOutput bool
 var force bool
 
 var getCmd = &cobra.Command{
@@ -354,16 +353,11 @@ func init() {
 	rootCmd.AddCommand(getRangeCmd)
 	rootCmd.AddCommand(getRangeTotalCmd)
 
-	getRangeTotalCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	getRangeTotalCmd.Flags().String("start", "", "Start date in DD-MM-YYYY format")
 	getRangeTotalCmd.Flags().String("end", "", "End date in DD-MM-YYYY format")
-	getRangeCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	getRangeCmd.Flags().String("start", "", "Start date in DD-MM-YY format")
 	getRangeCmd.Flags().String("end", "", "End date in DD-MM-YY format")
-	getCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
-	getDailyCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	getDailyCmd.Flags().String("date", "", "Date in DD-MM-YY format (defaults to today)")
-	getMonthlyCmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	getMonthlyCmd.Flags().String("month", "", "Month in -MM-YY format (defaults to current month)")
 	clearCmd.Flags().BoolVar(&force, "force", false, "Force clear without confirmation")
 }

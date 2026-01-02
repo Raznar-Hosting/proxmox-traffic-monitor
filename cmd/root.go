@@ -20,6 +20,8 @@ import (
 )
 
 var configPath string
+var jsonOutput bool
+
 var rootCmd = &cobra.Command{
 	Use:   "proxmox-traffic-monitor",
 	Short: "A tool to monitor Proxmox VM network traffic.",
@@ -126,6 +128,6 @@ func init() {
 	rootCmd.Flags().BoolP("verbose", "v", false, "Enable info logging")
 	rootCmd.Flags().BoolP("debug", "d", false, "Enable debug logging")
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "/var/lib/proxmox-traffic-monitor/config.yml", "Path to configuration file")
-
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 }
