@@ -65,7 +65,10 @@ func (s *Storage) init() error {
 func (s *Storage) UpdateTraffic(record TrafficRecord) error {
 	query := `
 	INSERT INTO traffic (id, vmid, nodeid, net_in, net_out, timestamp)
-	VALUES (?, ?, ?, ?, ?, ?);
+	VALUES (?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id, timestamp) DO UPDATE SET
+		net_in  = net_in  + excluded.net_in,
+		net_out = net_out + excluded.net_out;
 	`
 
 	ts := time.Now().Unix()
