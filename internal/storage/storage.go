@@ -8,6 +8,7 @@ import (
 	"time"
 
 	_ "github.com/glebarez/sqlite"
+	"github.com/rs/zerolog/log"
 )
 
 type TrafficRecord struct {
@@ -59,6 +60,49 @@ func (s *Storage) init() error {
 	if err != nil {
 		return fmt.Errorf("failed to create table: %w", err)
 	}
+
+	if err := s.dropLegacyDateColumn(); err != nil {
+		return fmt.Errorf("failed to migrate traffic table: %w", err)
+	}
+
+	return nil
+}
+
+// dropLegacyDateColumn removes the unused `date` column left behind by older
+// schemas. The current schema has no `date` column, so INSERTs into a
+// pre-existing table with `date TEXT NOT NULL` would otherwise fail.
+func (s *Storage) dropLegacyDateColumn() error {
+	rows, err := s.db.Query("PRAGMA table_info(traffic)")
+	if err != nil {
+		return err
+	}
+
+	var hasDate bool
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "date" {
+			hasDate = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if hasDate {
+		if _, err := s.db.Exec("ALTER TABLE traffic DROP COLUMN date"); err != nil {
+			return err
+		}
+		log.Info().Msg("Dropped legacy traffic.date column")
+	}
+
 	return nil
 }
 

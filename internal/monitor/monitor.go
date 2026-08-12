@@ -123,9 +123,11 @@ func (m *Monitor) collectTraffic(ctx context.Context) error {
 						Msg("NetOut counter reset detected")
 				}
 			} else {
-				// First run after start/restart
+				// New VM detected on this interval. Ensure it has a baseline
+				// recorded so its traffic is tracked from when it appeared.
 				deltaNetIn = 0
 				deltaNetOut = 0
+				m.initVM(id, nodeID, vm.VMID, currentNetIn, currentNetOut)
 				log.Debug().Str("vm", id).
 					Msg("First traffic collection, skipping delta")
 			}
@@ -197,57 +199,64 @@ func (m *Monitor) initTraffic() {
 			currentNetIn := uint64(stats.NetIn)
 			currentNetOut := uint64(stats.NetOut)
 
-			if currentNetIn == 0 && currentNetOut == 0 {
-				continue
-			}
-
 			id := fmt.Sprintf("%s-%d-%s", nodeID, vm.VMID, vm.Name)
-
-			// Check if DB has any record for this VM
-			hasRecord, err := m.storage.ExistsTraffic(id)
-			if err != nil {
-				log.Warn().Err(err).
-					Str("vm", id).
-					Msg("Failed to check DB for kickstarter")
-				continue
-			}
-
-			if !hasRecord {
-				now := time.Now()
-
-				// Initialize baseline record
-				record := storage.TrafficRecord{
-					ID:        id,
-					NodeID:    nodeID,
-					VMID:      vm.VMID,
-					In:        currentNetIn,
-					Out:       currentNetOut,
-					Timestamp: &now,
-				}
-
-				if err := m.storage.UpdateTraffic(record); err != nil {
-					log.Warn().Err(err).
-						Str("id", id).
-						Msg("Failed to update traffic in storage")
-				}
-
-				// Populate in-memory cache
-				m.prevTraffic[id] = struct {
-					NetIn  uint64
-					NetOut uint64
-				}{
-					NetIn:  currentNetIn,
-					NetOut: currentNetOut,
-				}
-
-				log.Debug().
-					Str("vm", id).
-					Uint64("net_in", currentNetIn).
-					Uint64("net_out", currentNetOut).
-					Msg("Kickstarter: initialized baseline traffic")
-			}
+			m.initVM(id, nodeID, vm.VMID, currentNetIn, currentNetOut)
 		}
 	}
+}
+
+// initVM records a baseline for a VM that has no traffic records yet, so its
+// usage is tracked from when it first appears. It is called at startup and on
+// every interval for newly discovered VMs.
+func (m *Monitor) initVM(id, nodeID string, vmid int64, netIn, netOut uint64) {
+	if netIn == 0 && netOut == 0 {
+		return
+	}
+
+	hasRecord, err := m.storage.ExistsTraffic(id)
+	if err != nil {
+		log.Warn().Err(err).
+			Str("vm", id).
+			Msg("Failed to check DB for VM baseline")
+		return
+	}
+	if hasRecord {
+		return
+	}
+
+	now := time.Now()
+
+	// Initialize baseline record
+	record := storage.TrafficRecord{
+		ID:        id,
+		NodeID:    nodeID,
+		VMID:      vmid,
+		In:        netIn,
+		Out:       netOut,
+		Timestamp: &now,
+	}
+
+	if err := m.storage.UpdateTraffic(record); err != nil {
+		log.Warn().Err(err).
+			Str("id", id).
+			Msg("Failed to initialize baseline traffic")
+		return
+	}
+
+	// Populate in-memory cache
+	m.prevTraffic[id] = struct {
+		NetIn  uint64
+		NetOut uint64
+	}{
+		NetIn:  netIn,
+		NetOut: netOut,
+	}
+
+	log.Debug().
+		Str("vm", id).
+		Uint64("net_in", netIn).
+		Uint64("net_out", netOut).
+		Msg("Initialized baseline traffic")
 }
 
 func (m *Monitor) cleanup() {
