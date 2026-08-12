@@ -74,7 +74,7 @@ func (c *Config) applyDefaults() {
 		c.App.Database = "/var/lib/proxmox-traffic-monitor/data.db"
 	}
 	if c.App.RetentionPeriod == 0 {
-		c.App.RetentionPeriod = 30
+		c.App.RetentionPeriod = 60
 	}
 	if c.App.FetchInterval < 1 {
 		c.App.FetchInterval = 30
