@@ -3,4 +3,4 @@ app:
   sync_queue_buffer: 100
   database: "/var/lib/proxmox-traffic-monitor/data.db"
   retention-period: 30
-  fetch-interval: 1
+  fetch-interval: 30

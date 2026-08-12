@@ -77,7 +77,7 @@ func (c *Config) applyDefaults() {
 		c.App.RetentionPeriod = 30
 	}
 	if c.App.FetchInterval < 1 {
-		c.App.FetchInterval = 5
+		c.App.FetchInterval = 30
 	}
 	if c.App.SyncQueueWorkers == 0 {
 		c.App.SyncQueueWorkers = 4

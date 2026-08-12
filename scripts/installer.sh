@@ -2,12 +2,12 @@
 set -e
 
 # CHANGE THE URL AT ANYTIME.
-BIN_URL="https://filebin.net/oa51ajrwqejuc9l7/proxmox-traffic-monitor_linux_amd64"
-BIN_PATH="/usr/local/bin/proxmox-traffic-monitor"
-SYMLINK="/usr/bin/proxmox-traffic-monitor"
-SERVICE_PATH="/etc/systemd/system/proxmox-traffic-monitor.service"
+BIN_URL="https://filebin.net/oa51ajrwqejuc9l7/pmx-tm_linux_amd64"
+BIN_PATH="/usr/local/bin/pmx-tm"
+SYMLINK="/usr/bin/pmx-tm"
+SERVICE_PATH="/etc/systemd/system/pmx-tm.service"
 
-echo "Downloading proxmox-traffic-monitor..."
+echo "Downloading pmx-tm..."
 curl -fsSL -o "$BIN_PATH" "$BIN_URL"
 
 echo "Setting executable permission..."
@@ -40,8 +40,8 @@ systemctl daemon-reexec
 systemctl daemon-reload
 
 echo "Enabling and starting service..."
-systemctl enable proxmox-traffic-monitor
-systemctl start proxmox-traffic-monitor
+systemctl enable pmx-tm
+systemctl start pmx-tm
 
 echo "Installation complete."
-systemctl status proxmox-traffic-monitor --no-pager
+systemctl status pmx-tm --no-pager

@@ -10,7 +10,7 @@ type AppConfig struct {
 	// Traffic monitoring settings
 	Database        string `yaml:"database"`         // path to sqlite database
 	RetentionPeriod int    `yaml:"retention-period"` // in days
-	FetchInterval   int    `yaml:"fetch-interval"`   // in minutes
+	FetchInterval   int    `yaml:"fetch-interval"`   // in seconds
 
 
 }

@@ -1,4 +1,4 @@
-APP_NAME := proxmox-traffic-monitor
+APP_NAME := pmx-tm
 SOURCE_PATH := .
 
 GOOS_VAR := linux
